@@ -6,6 +6,8 @@ With compatible Staff isolation enabled, restricted subjects' new local player/c
 
 Automatic punishment checks the original revision before scheduling, after a configured delay, and immediately before each command. Mixed command batches retain kicks, corrections and unknown actions. Existing manual staff punishment paths are unaffected. Recognized `/autoban` commands go directly to Staff's origin-aware service with the captured revision; this prevents delayed work from receiving a fresh token at console arrival.
 
+Notification commands and the direct Discord punishment publisher also check the captured revision. A delayed mixed batch cannot announce its old punishment after a player has been released, even though current normal-generation alerts are allowed again.
+
 Staff installs the public `integration.StaffIsolationPolicy` callbacks using cached reflection. This plugin has no compile-time Staff dependency. Absent Staff preserves ordinary TotemGuard behavior. Staff's restricted-state and revision reads perform no database work in TotemGuard callbacks. Do not cancel `FlagEvent` or grant `TotemGuard.Bypass` to implement output suppression.
 
 In the existing deployed `checks.yml`, set the default automatic ban command to:

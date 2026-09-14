@@ -64,8 +64,7 @@ public class AlertManagerImpl implements AlertManager {
     }
 
     public void sendAlert(Check check, Component details, long flagRevision) {
-        if (flagRevision != StaffIsolationPolicy.revision(check.getPlayer().getUniqueId())
-                || StaffIsolationPolicy.suppressed(check.getPlayer().getUniqueId())) {
+        if (!StaffIsolationPolicy.allowsNotification(check.getPlayer().getUniqueId(), flagRevision)) {
             databaseProvider.getAlertRepository().storeAlert(check);
             return;
         }

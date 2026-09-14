@@ -82,7 +82,7 @@ public class PunishmentManager {
     private void executePunishment(Check check, Component details, long revision, boolean banEligible) {
         if (outputOnly(check) && (!banEligible || !StaffIsolationPolicy.allowsBan(check.getPlayer().getUniqueId(), revision))) return;
         runPunishmentCommands(check, revision, banEligible);
-        if (!StaffIsolationPolicy.suppressed(check.getPlayer().getUniqueId())) {
+        if (StaffIsolationPolicy.allowsNotification(check.getPlayer().getUniqueId(), revision)) {
             plugin.getDiscordManager().sendPunishment(check, PlainTextComponentSerializer.plainText().serialize(details));
         }
         databaseProvider.getPunishmentRepository().storePunishment(check);

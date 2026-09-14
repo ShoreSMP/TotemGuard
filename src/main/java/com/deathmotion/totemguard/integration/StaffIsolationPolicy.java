@@ -60,9 +60,16 @@ public final class StaffIsolationPolicy {
                 || label(command).equals("anticheatbc");
     }
 
+    public static boolean allowsNotification(UUID uuid, long revision) {
+        Hooks current = hooks;
+        if (current == null) return true;
+        try { return revision == current.revision.applyAsLong(uuid) && !current.suppress.test(uuid); }
+        catch (RuntimeException failure) { return false; }
+    }
+
     public static boolean allowsCommand(UUID uuid, String command, long revision, boolean banEligible) {
         if (isBan(command)) return banEligible && allowsBan(uuid, revision);
-        return !isNotification(command) || !suppressed(uuid);
+        return !isNotification(command) || allowsNotification(uuid, revision);
     }
 
     private static String label(String command) {

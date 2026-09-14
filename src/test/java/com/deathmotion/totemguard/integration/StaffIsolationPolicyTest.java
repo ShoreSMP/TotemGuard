@@ -39,6 +39,31 @@ class StaffIsolationPolicyTest {
         }
     }
 
+    @Test void delayedMixedBatchCannotAnnounceItsOldBanAfterRelease() {
+        AtomicLong revision = new AtomicLong(1);
+        StaffIsolationPolicy.install(owner, id -> false, id -> revision.get(),
+                (id, token) -> token == revision.get(), request -> true);
+        long captured = StaffIsolationPolicy.revision(subject);
+        assertTrue(StaffIsolationPolicy.allowsNotification(subject, captured));
+        revision.set(3); // The subject is normal again, but this mixed batch predates isolation.
+        for (String command : List.of("anticheatbc Player", "[webhook]", "[alert]", "[proxy]")) {
+            assertFalse(StaffIsolationPolicy.allowsCommand(subject, command, captured, true), command);
+        }
+        assertFalse(StaffIsolationPolicy.allowsNotification(subject, captured), "The direct Discord publisher must reject the same old batch");
+        assertTrue(StaffIsolationPolicy.allowsCommand(subject, "kick Player invalid packet", captured, false));
+        assertTrue(StaffIsolationPolicy.allowsCommand(subject, "custom-correction Player", captured, false));
+        assertTrue(StaffIsolationPolicy.allowsNotification(subject, revision.get()), "New normal-generation notifications resume");
+    }
+
+    @Test void currentRestrictedNotificationsAndLookupFailuresStaySuppressed() {
+        StaffIsolationPolicy.install(owner, id -> true, id -> 3, (id, token) -> false, request -> true);
+        assertFalse(StaffIsolationPolicy.allowsNotification(subject, 3));
+        StaffIsolationPolicy.install(owner, id -> false, id -> { throw new IllegalStateException(); },
+                (id, token) -> false, request -> true);
+        assertFalse(StaffIsolationPolicy.allowsNotification(subject, 3));
+        assertTrue(StaffIsolationPolicy.allowsCommand(subject, "kick Player bad packet", 3, true));
+    }
+
     @Test void insufficientFreshFlagsBlockOnlyAutomaticBans() {
         StaffIsolationPolicy.install(owner, id -> false, id -> 3, (id, token) -> token == 3, request -> true);
         assertFalse(StaffIsolationPolicy.allowsCommand(subject, "autoban totemguard Player 1d reason", 3, false));
