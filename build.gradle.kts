@@ -25,6 +25,9 @@ dependencies {
 
     // Loaded during runtime
     compileOnlyDeps.forEach { compileOnly(it) }
+
+    testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.11.4")
 }
 
 group = "com.deathmotion.totemguard"
@@ -49,7 +52,7 @@ fun getVersionMeta(includeHash: Boolean): String {
     return "$commitHash-SNAPSHOT"
 }
 version = "$fullVersion${getVersionMeta(true)}"
-ext["versionNoHash"] = "$fullVersion${getVersionMeta(false)}"
+ext["versionNoHash"] = "$fullVersion${getVersionMeta(false)}-shore.1"
 
 tasks {
     jar {
@@ -76,6 +79,7 @@ tasks {
 
     withType<Test> {
         failOnNoDiscoveredTests = false
+        useJUnitPlatform()
     }
 
     generateVersionsFile {

@@ -19,6 +19,8 @@
 package com.deathmotion.totemguard.checks;
 
 import com.deathmotion.totemguard.TotemGuard;
+import com.deathmotion.totemguard.integration.StaffIsolationPolicy;
+import com.deathmotion.totemguard.integration.AutomaticViolationCounter;
 import com.deathmotion.totemguard.api.events.FlagEvent;
 import com.deathmotion.totemguard.api.interfaces.AbstractCheck;
 import com.deathmotion.totemguard.config.Messages;
@@ -83,17 +85,26 @@ public class Check implements AbstractCheck {
         this.color = getColors();
     }
 
+    private final AutomaticViolationCounter automaticViolations = new AutomaticViolationCounter();
+
+    public int getStaffEligibleViolations(long revision) {
+        return automaticViolations.count(revision);
+    }
+
     public void fail() {
         fail(Component.empty());
     }
 
     public void fail(Component details) {
+        final long flagRevision = StaffIsolationPolicy.revision(player.getUniqueId());
         FoliaScheduler.getAsyncScheduler().runNow(TotemGuard.getInstance(), (O) -> {
             if (!shouldFail()) return;
             this.violations.incrementAndGet();
+            automaticViolations.record(StaffIsolationPolicy.revision(player.getUniqueId()),
+                    StaffIsolationPolicy.suppressed(player.getUniqueId()), flagRevision);
 
-            TotemGuard.getInstance().getAlertManager().sendAlert(this, details);
-            TotemGuard.getInstance().getPunishmentManager().punishPlayer(this, details);
+            TotemGuard.getInstance().getAlertManager().sendAlert(this, details, flagRevision);
+            TotemGuard.getInstance().getPunishmentManager().punishPlayer(this, details, flagRevision);
         });
     }
 

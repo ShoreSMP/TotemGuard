@@ -19,6 +19,7 @@
 package com.deathmotion.totemguard.manager;
 
 import com.deathmotion.totemguard.TotemGuard;
+import com.deathmotion.totemguard.integration.StaffIsolationPolicy;
 import com.deathmotion.totemguard.api.events.PunishEvent;
 import com.deathmotion.totemguard.checks.Check;
 import com.deathmotion.totemguard.database.DatabaseProvider;
@@ -45,9 +46,15 @@ public class PunishmentManager {
     }
 
     public void punishPlayer(Check check, Component details) {
+        punishPlayer(check, details, StaffIsolationPolicy.revision(check.getPlayer().getUniqueId()));
+    }
+
+    public void punishPlayer(Check check, Component details, long revision) {
         if (!check.getCheckSettings().isPunishable()) return;
         if (check.getViolations() < check.getCheckSettings().getMaxViolations()) return;
         if (toBePunished.contains(check.getPlayer().getUniqueId())) return;
+        boolean banEligible = check.getStaffEligibleViolations(revision) >= check.getCheckSettings().getMaxViolations();
+        if (outputOnly(check) && (!banEligible || !StaffIsolationPolicy.allowsBan(check.getPlayer().getUniqueId(), revision))) return;
 
         if (check.getSettings().isApi()) {
             PunishEvent punishEvent = new PunishEvent(check.getPlayer(), check);
@@ -55,30 +62,40 @@ public class PunishmentManager {
             if (punishEvent.isCancelled()) return;
         }
 
-        toBePunished.add(check.getPlayer().getUniqueId());
-        startPunishment(check, details);
+        if (!toBePunished.add(check.getPlayer().getUniqueId())) return;
+        startPunishment(check, details, revision, banEligible);
     }
 
-    private void startPunishment(Check check, Component details) {
+    private void startPunishment(Check check, Component details, long revision, boolean banEligible) {
         int delay = check.getCheckSettings().getPunishmentDelayInSeconds();
         if (delay <= 0) {
-            executePunishment(check, details);
-            toBePunished.remove(check.getPlayer().getUniqueId());
+            try { executePunishment(check, details, revision, banEligible); }
+            finally { toBePunished.remove(check.getPlayer().getUniqueId()); }
         } else {
             FoliaScheduler.getAsyncScheduler().runDelayed(plugin, (o) -> {
-                executePunishment(check, details);
-                toBePunished.remove(check.getPlayer().getUniqueId());
+                try { executePunishment(check, details, revision, banEligible); }
+                finally { toBePunished.remove(check.getPlayer().getUniqueId()); }
             }, delay, TimeUnit.SECONDS);
         }
     }
 
-    private void executePunishment(Check check, Component details) {
-        runPunishmentCommands(check);
-        plugin.getDiscordManager().sendPunishment(check, PlainTextComponentSerializer.plainText().serialize(details));
+    private void executePunishment(Check check, Component details, long revision, boolean banEligible) {
+        if (outputOnly(check) && (!banEligible || !StaffIsolationPolicy.allowsBan(check.getPlayer().getUniqueId(), revision))) return;
+        runPunishmentCommands(check, revision, banEligible);
+        if (!StaffIsolationPolicy.suppressed(check.getPlayer().getUniqueId())) {
+            plugin.getDiscordManager().sendPunishment(check, PlainTextComponentSerializer.plainText().serialize(details));
+        }
         databaseProvider.getPunishmentRepository().storePunishment(check);
     }
 
-    private void runPunishmentCommands(Check check) {
+    private boolean outputOnly(Check check) {
+        String defaultCommand = plugin.getConfigManager().getChecks().getDefaultPunishment();
+        List<String> commands = check.getCheckSettings().getPunishmentCommands();
+        return !commands.isEmpty() && commands.stream().map(command -> command.replace("%default_punishment%", defaultCommand))
+                .allMatch(command -> StaffIsolationPolicy.isBan(command) || StaffIsolationPolicy.isNotification(command));
+    }
+
+    private void runPunishmentCommands(Check check, long revision, boolean banEligible) {
         String defaultPunishment = plugin.getConfigManager().getChecks().getDefaultPunishment();
         List<String> commands = check.getCheckSettings().getPunishmentCommands();
         List<String> processedCommands = new ArrayList<>();
@@ -98,6 +115,9 @@ public class PunishmentManager {
 
         FoliaScheduler.getGlobalRegionScheduler().run(plugin, (o) -> {
             for (String command : processedCommands) {
+                UUID uuid = check.getPlayer().getUniqueId();
+                if (!StaffIsolationPolicy.allowsCommand(uuid, command, revision, banEligible)) continue;
+                if (StaffIsolationPolicy.dispatchAutoban(uuid, command, revision)) continue;
                 plugin.getServer().dispatchCommand(plugin.getServer().getConsoleSender(), command);
             }
         });

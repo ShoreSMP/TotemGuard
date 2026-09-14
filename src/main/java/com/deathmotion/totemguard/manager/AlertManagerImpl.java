@@ -19,6 +19,7 @@
 package com.deathmotion.totemguard.manager;
 
 import com.deathmotion.totemguard.TotemGuard;
+import com.deathmotion.totemguard.integration.StaffIsolationPolicy;
 import com.deathmotion.totemguard.api.events.AlertsToggleEvent;
 import com.deathmotion.totemguard.api.interfaces.AlertManager;
 import com.deathmotion.totemguard.checks.Check;
@@ -59,6 +60,15 @@ public class AlertManagerImpl implements AlertManager {
      * @param details Additional message details.
      */
     public void sendAlert(Check check, Component details) {
+        sendAlert(check, details, StaffIsolationPolicy.revision(check.getPlayer().getUniqueId()));
+    }
+
+    public void sendAlert(Check check, Component details, long flagRevision) {
+        if (flagRevision != StaffIsolationPolicy.revision(check.getPlayer().getUniqueId())
+                || StaffIsolationPolicy.suppressed(check.getPlayer().getUniqueId())) {
+            databaseProvider.getAlertRepository().storeAlert(check);
+            return;
+        }
         Pair<Component, Component> craftedAlert = messageService.createAlert(check, details);
 
         // Send to all players who have alerts enabled
