@@ -91,6 +91,7 @@ public final class V2ConfigMigrator {
 
         applyToFile(v3PluginDir.resolve("config.yml"), migration.configOverrides);
         applyToFile(v3PluginDir.resolve("discord.yml"), migration.discordOverrides);
+        applyToFile(v3PluginDir.resolve("checks.yml"), migration.checkOverrides);
 
         logger.info("Carried over " + migration.totalCount()
                 + " setting(s) from TotemGuard V2 into V3 configs.");
@@ -102,6 +103,10 @@ public final class V2ConfigMigrator {
 
         extractFromV2Config(dir.resolve("config.yml"), migration);
         extractFromV2Webhooks(dir.resolve("webhooks.yml"), migration);
+        Map<String, Object> checks = Files.isRegularFile(dir.resolve("checks.yml")) ? readYamlMap(dir.resolve("checks.yml")) : null;
+        if (checks != null && checks.get("default-punishment") instanceof String command && !command.isBlank()) {
+            migration.checkOverrides.put(List.of("default-punishment"), command.replace("%player%", "%tg_player%"));
+        }
 
         Path archive = dir.resolve(OLD_DIR);
         Files.createDirectories(archive);
@@ -344,13 +349,14 @@ public final class V2ConfigMigrator {
     public static final class V2Migration {
         private final Map<List<String>, Object> configOverrides = new LinkedHashMap<>();
         private final Map<List<String>, Object> discordOverrides = new LinkedHashMap<>();
+        private final Map<List<String>, Object> checkOverrides = new LinkedHashMap<>();
 
         public boolean isEmpty() {
-            return configOverrides.isEmpty() && discordOverrides.isEmpty();
+            return configOverrides.isEmpty() && discordOverrides.isEmpty() && checkOverrides.isEmpty();
         }
 
         public int totalCount() {
-            return configOverrides.size() + discordOverrides.size();
+            return configOverrides.size() + discordOverrides.size() + checkOverrides.size();
         }
     }
 }

@@ -5,6 +5,9 @@ plugins {
 }
 
 dependencies {
+    testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.11.4")
+    testImplementation(libs.snakeyaml)
     api(projects.api)
     api(projects.loader.host)
     implementation(projects.integrity)
@@ -25,3 +28,5 @@ dependencies {
     compileOnly(libs.cloud.core)
     compileOnly(libs.grim.api)
 }
+
+tasks.withType<Test>().configureEach { useJUnitPlatform() }

@@ -17,6 +17,7 @@
  */
 
 package com.deathmotion.totemguard.common.features.punishment;
+import com.deathmotion.totemguard.integration.StaffIsolationPolicy;
 
 import com.deathmotion.totemguard.api.punishment.PunishmentRepository;
 import com.deathmotion.totemguard.api.punishment.PunishmentType;
@@ -84,8 +85,13 @@ public class PunishmentRepositoryImpl implements PunishmentRepository, Reloadabl
 
     public void punish(CheckImpl check, int violations, @Nullable String debug,
                        @Nullable DebugTemplate.Compiled compiledDebug) {
+        punish(check, violations, debug, compiledDebug, StaffIsolationPolicy.revision(check.player.getUuid()));
+    }
+
+    public void punish(CheckImpl check, int violations, @Nullable String debug,
+                       @Nullable DebugTemplate.Compiled compiledDebug, long revision) {
         if (!canPunish(check, violations)) return;
-        runPunishment(check, resolveCommands(check), debug, compiledDebug, Map.of(), true, true);
+        runPunishment(check, resolveCommands(check), debug, compiledDebug, Map.of(), true, true, revision);
     }
 
     public void punishWith(CheckImpl check,
@@ -110,7 +116,8 @@ public class PunishmentRepositoryImpl implements PunishmentRepository, Reloadabl
                            Map<String, Object> placeholderExtras,
                            boolean sendPunishmentWebhook) {
         if (commands.isEmpty()) return;
-        runPunishment(check, commands, debug, compiledDebug, placeholderExtras, false, sendPunishmentWebhook);
+        runPunishment(check, commands, debug, compiledDebug, placeholderExtras, false, sendPunishmentWebhook,
+                StaffIsolationPolicy.revision(check.player.getUuid()));
     }
 
     private void runPunishment(CheckImpl check,
@@ -119,11 +126,15 @@ public class PunishmentRepositoryImpl implements PunishmentRepository, Reloadabl
                                @Nullable DebugTemplate.Compiled compiledDebug,
                                Map<String, Object> placeholderExtras,
                                boolean clearViolationsAfter,
-                               boolean sendPunishmentWebhook) {
+                               boolean sendPunishmentWebhook, long revision) {
         TGPlayer player = check.player;
         UUID playerUuid = player.getUuid();
+        boolean banEligible = !clearViolationsAfter || check.automaticViolations(revision) >= check.getMaxViolations();
+        List<PunishmentCommand> allowed = commands.stream().filter(command -> allowed(playerUuid, command,
+                command.raw().replace("%default_punishment%", defaultPunishmentCommand.raw()), revision, banEligible)).toList();
+        if (allowed.isEmpty()) return;
 
-        boolean containsBan = containsBan(commands);
+        boolean containsBan = containsBan(allowed);
 
         if (!tryClaim(playerUuid, containsBan)) return;
 
@@ -134,18 +145,18 @@ public class PunishmentRepositoryImpl implements PunishmentRepository, Reloadabl
             Runnable executeAndCleanup = () -> {
                 boolean keepDistributedLock = false;
                 try {
-                    if (!executePunishment(check, commands, debug, compiledDebug, placeholderExtras)) {
+                    if (!executePunishment(check, allowed, debug, compiledDebug, placeholderExtras, revision, banEligible)) {
                         platform.getLogger().warning(
                                 "Skipped punishment for " + player.getName() + " because no punishment commands could be executed for check " + check.getName() + "."
                         );
                         return;
                     }
 
-                    if (sendPunishmentWebhook) {
-                        platform.getDiscordWebhookService().sendPunishment(check, debug);
+                    if (sendPunishmentWebhook && StaffIsolationPolicy.allowsNotification(playerUuid, revision)) {
+                        platform.getDiscordWebhookService().sendPunishment(check, debug, revision);
                     }
 
-                    if (clearViolationsAfter) player.getCheckManager().clearAllViolations();
+                    if (clearViolationsAfter && StaffIsolationPolicy.allowsBan(playerUuid, revision)) player.getCheckManager().clearAllViolations();
                     keepDistributedLock = containsBan;
                 } finally {
                     finishClaim(playerUuid, containsBan, keepDistributedLock);
@@ -154,7 +165,7 @@ public class PunishmentRepositoryImpl implements PunishmentRepository, Reloadabl
 
             BanAnimation animation = player.getBanAnimation();
             if (configRepository.configView().banAnimationEnabled()
-                    && containsRemoval(commands)
+                    && containsRemoval(allowed) && !StaffIsolationPolicy.suppressed(playerUuid)
                     && animation.isSupported()) {
                 animation.play();
                 platform.getScheduler().runAsyncTaskDelayed(executeAndCleanup, animation.getDurationMs(), TimeUnit.MILLISECONDS);
@@ -205,6 +216,7 @@ public class PunishmentRepositoryImpl implements PunishmentRepository, Reloadabl
 
     private boolean containsBan(List<PunishmentCommand> commands) {
         for (PunishmentCommand command : commands) {
+            if (StaffIsolationPolicy.isBan(command.raw().replace("%default_punishment%", defaultPunishmentCommand.raw()))) return true;
             if (command.type() == PunishmentType.BAN) return true;
             // User-defined commands may inline `%default_punishment%`; if the default
             // resolves to a BAN, treat the whole batch as ban-bearing.
@@ -235,7 +247,7 @@ public class PunishmentRepositoryImpl implements PunishmentRepository, Reloadabl
                                       List<PunishmentCommand> commands,
                                       @Nullable String debug,
                                       @Nullable DebugTemplate.Compiled compiledDebug,
-                                      Map<String, Object> placeholderExtras) {
+                                      Map<String, Object> placeholderExtras, long revision, boolean banEligible) {
         int dispatchedCommands = 0;
 
         for (PunishmentCommand command : commands) {
@@ -252,7 +264,10 @@ public class PunishmentRepositoryImpl implements PunishmentRepository, Reloadabl
                     continue;
                 }
 
-                platform.dispatchCommand(dispatched);
+                UUID uuid = check.player.getUuid();
+                if (!allowed(uuid, command, dispatched, revision, banEligible)) continue;
+                platform.dispatchCommand(dispatched, () -> allowed(uuid, command, dispatched, revision, banEligible)
+                        && !StaffIsolationPolicy.dispatchAutoban(uuid, dispatched, revision));
                 dispatchedCommands++;
                 PunishmentType effectiveType = effectiveType(command);
                 if (effectiveType != PunishmentType.GENERIC) {
@@ -268,6 +283,12 @@ public class PunishmentRepositoryImpl implements PunishmentRepository, Reloadabl
         }
 
         return dispatchedCommands > 0;
+    }
+
+    private boolean allowed(UUID uuid, PunishmentCommand command, String text, long revision, boolean banEligible) {
+        if (effectiveType(command) == PunishmentType.BAN)
+            return banEligible && StaffIsolationPolicy.allowsBan(uuid, revision);
+        return StaffIsolationPolicy.allowsCommand(uuid, text, revision, banEligible);
     }
 
     private void recordPunishment(CheckImpl check, PunishmentType type, String commandTemplate,

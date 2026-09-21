@@ -27,12 +27,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public final class ChatBuffer {
     private final CheckImpl check;
+    private final long isolationRevision;
     private final AtomicInteger violations = new AtomicInteger();
     private volatile @Nullable String debug;
     private volatile @NotNull Map<String, Object> extras = Map.of();
 
-    ChatBuffer(CheckImpl check) {
+    ChatBuffer(CheckImpl check, long isolationRevision) {
         this.check = check;
+        this.isolationRevision = isolationRevision;
     }
 
     void update(int newViolations, @Nullable String debug, @NotNull Map<String, Object> extras) {
@@ -48,6 +50,9 @@ public final class ChatBuffer {
 
     CheckImpl getCheck() {
         return check;
+    }
+    boolean allowsPublication() {
+        return com.deathmotion.totemguard.integration.StaffIsolationPolicy.allowsNotification(check.player.getUuid(), isolationRevision);
     }
 
     int getViolations() {

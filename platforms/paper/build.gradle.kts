@@ -17,6 +17,7 @@ dependencies {
 }
 
 tasks.withType<ShadowJar>().configureEach {
+    archiveFileName.set("TotemGuard-Paper-3.0.0-shore.1-SNAPSHOT.jar")
     val libsPrefix = "com.deathmotion.totemguard.common.libs"
     relocate("org.incendo.cloud", "$libsPrefix.cloud")
     relocate("io.leangen.geantyref", "$libsPrefix.geantyref")

@@ -17,6 +17,7 @@
  */
 
 package com.deathmotion.totemguard.common.features.discord;
+import com.deathmotion.totemguard.integration.StaffIsolationPolicy;
 
 import com.deathmotion.totemguard.api.reload.Reloadable;
 import com.deathmotion.totemguard.common.TGPlatform;
@@ -99,14 +100,21 @@ public final class DiscordWebhookService implements Reloadable {
     }
 
     public void sendAlert(@NotNull CheckImpl check, int violations, @Nullable String debug) {
-        dispatch(alertChannel, check, violations, debug);
+        sendAlert(check, violations, debug, StaffIsolationPolicy.revision(check.player.getUuid()));
+    }
+    public void sendAlert(@NotNull CheckImpl check, int violations, @Nullable String debug, long revision) {
+        dispatch(alertChannel, check, violations, debug, revision);
     }
 
     public void sendPunishment(@NotNull CheckImpl check, @Nullable String debug) {
-        dispatch(punishmentChannel, check, check.getViolations(), debug);
+        sendPunishment(check, debug, StaffIsolationPolicy.revision(check.player.getUuid()));
+    }
+    public void sendPunishment(@NotNull CheckImpl check, @Nullable String debug, long revision) {
+        dispatch(punishmentChannel, check, check.getViolations(), debug, revision);
     }
 
-    private void dispatch(WebhookChannel channel, CheckImpl check, int violations, @Nullable String debug) {
+    private void dispatch(WebhookChannel channel, CheckImpl check, int violations, @Nullable String debug, long revision) {
+        if (!StaffIsolationPolicy.allowsNotification(check.player.getUuid(), revision)) return;
         ChannelConfig cfg = channel.config;
         if (cfg == null || !cfg.valid()) return;
 
@@ -161,7 +169,7 @@ public final class DiscordWebhookService implements Reloadable {
                 .POST(HttpRequest.BodyPublishers.ofString(msg.toJson().toString()))
                 .build();
 
-        channel.enqueue(request);
+        channel.enqueue(new PendingWebhook(request, check.player.getUuid(), revision));
     }
 
     private String render(CompiledDiscordTemplate template, Function<String, String> resolver) {
@@ -262,9 +270,11 @@ public final class DiscordWebhookService implements Reloadable {
         }
     }
 
+    private record PendingWebhook(HttpRequest request, java.util.UUID subject, long revision) { }
+
     private final class WebhookChannel {
         private final String prefix;
-        private final LinkedBlockingDeque<HttpRequest> queue = new LinkedBlockingDeque<>(MAX_QUEUE_SIZE);
+        private final LinkedBlockingDeque<PendingWebhook> queue = new LinkedBlockingDeque<>(MAX_QUEUE_SIZE);
         private final AtomicBoolean sending = new AtomicBoolean(false);
         private final AtomicLong rateLimitedUntil = new AtomicLong(0);
         private final AtomicBoolean started = new AtomicBoolean(false);
@@ -281,7 +291,7 @@ public final class DiscordWebhookService implements Reloadable {
             queue.clear();
         }
 
-        void enqueue(HttpRequest req) {
+        void enqueue(PendingWebhook req) {
             if (!queue.offerLast(req)) {
                 queue.pollFirst();
                 queue.offerLast(req);
@@ -307,7 +317,13 @@ public final class DiscordWebhookService implements Reloadable {
             if (now < rateLimitedUntil.get()) return;
             if (!sending.compareAndSet(false, true)) return;
 
-            HttpRequest req = queue.peekFirst();
+            PendingWebhook pending = queue.peekFirst();
+            if (pending != null && !StaffIsolationPolicy.allowsNotification(pending.subject(), pending.revision())) {
+                queue.remove(pending);
+                sending.set(false);
+                return;
+            }
+            HttpRequest req = pending == null ? null : pending.request();
             if (req == null) {
                 sending.set(false);
                 return;
@@ -332,7 +348,7 @@ public final class DiscordWebhookService implements Reloadable {
                     }
                 } finally {
                     if (err != null || resp == null || resp.statusCode() != 429) {
-                        queue.pollFirst();
+                        queue.remove(pending);
                     }
                     sending.set(false);
                 }
