@@ -17,7 +17,6 @@
  */
 
 package com.deathmotion.totemguard.common.features.alert;
-import com.deathmotion.totemguard.integration.StaffIsolationPolicy;
 
 import com.deathmotion.totemguard.api.alert.AlertRepository;
 import com.deathmotion.totemguard.api.check.CheckType;
@@ -155,42 +154,41 @@ public class AlertRepositoryImpl implements AlertRepository, PresenceListener, C
     public void alert(CheckImpl check, int violations, @Nullable String debug,
                       @Nullable DebugTemplate.Compiled compiledDebug, Map<String, Object> extras) {
         UUID violatorUuid = check.player.getUuid();
-        long revision = StaffIsolationPolicy.revision(violatorUuid);
-        check.recordAutomaticViolation(revision);
-        platform.getDatabaseRepository().recordAlert(check.player.getDatabaseProfileId(), check.player.getDatabasePlayerId(),
-                check.getName(), debug, compiledDebug, System.currentTimeMillis());
-        if (!StaffIsolationPolicy.allowsNotification(violatorUuid, revision)) {
-            platform.getScheduler().runAsyncTask(() -> punishmentRepository.punish(check, violations, debug, compiledDebug, revision));
-            return;
-        }
         String violatorName = check.player.getName();
         Component realtimeMessage = AlertBuilder.build(check, violations, debug, extras);
         realtimeRoster.deliver(violatorUuid, realtimeMessage);
 
         if (platform.getRedisRepository().isClusterMode() && violatorName != null) {
-            platform.getScheduler().runAsyncTask(() -> { if (StaffIsolationPolicy.allowsNotification(violatorUuid, revision)) platform.getRedisRepository().publish(
+            platform.getScheduler().runAsyncTask(() -> platform.getRedisRepository().publish(
                     Packets.SYNC_FOCUS_ALERT.packet(),
                     new SyncFocusAlertPacket.Payload(violatorUuid, violatorName, realtimeMessage)
-            ); });
+            ));
         }
 
-        bufferChatAlert(check, violations, debug, extras, revision);
+        bufferChatAlert(check, violations, debug, extras);
 
+        platform.getDatabaseRepository().recordAlert(
+                check.player.getDatabaseProfileId(),
+                check.player.getDatabasePlayerId(),
+                check.getName(),
+                debug,
+                compiledDebug,
+                System.currentTimeMillis()
+        );
         platform.getScheduler().runAsyncTask(() -> {
-            punishmentRepository.punish(check, violations, debug, compiledDebug, revision);
-            if (!StaffIsolationPolicy.allowsNotification(violatorUuid, revision)) return;
-            platform.getDiscordWebhookService().sendAlert(check, violations, debug, revision);
+            platform.getDiscordWebhookService().sendAlert(check, violations, debug);
+            punishmentRepository.punish(check, violations, debug, compiledDebug);
             if (platform.getSessionViolationStore() != null && check.getType() != CheckType.MOD) {
                 platform.getSessionViolationStore().recordViolation(violatorUuid, check.getName());
             }
         });
     }
 
-    private void bufferChatAlert(CheckImpl check, int violations, @Nullable String debug, Map<String, Object> extras, long revision) {
+    private void bufferChatAlert(CheckImpl check, int violations, @Nullable String debug, Map<String, Object> extras) {
         chatBuffers.computeIfAbsent(
                 check.player.getUuid(),
                 ignored -> new PlayerChatBuffer(platform.getScheduler(), this::broadcastFlag, CHAT_BUFFER_WINDOW_SECONDS)
-        ).buffer(check, violations, debug, extras, revision);
+        ).buffer(check, violations, debug, extras);
     }
 
     public void broadcast(String message) {
@@ -202,12 +200,10 @@ public class AlertRepositoryImpl implements AlertRepository, PresenceListener, C
     }
 
     public void acceptRemoteAlert(SyncAlertMessagePacket.Payload payload) {
-        if (payload.violatorUuid() != null && StaffIsolationPolicy.suppressed(payload.violatorUuid())) return;
         deliverToBroadcastViewers(payload.violatorUuid(), payload.component(), true);
     }
 
     public void acceptRemoteFocusAlert(SyncFocusAlertPacket.Payload payload) {
-        if (StaffIsolationPolicy.suppressed(payload.violatorUuid())) return;
         UUID violatorUuid = payload.violatorUuid();
         Component message = payload.component();
         for (AlertSubscription sub : realtimeRoster.matching(violatorUuid)) {
@@ -221,7 +217,6 @@ public class AlertRepositoryImpl implements AlertRepository, PresenceListener, C
     }
 
     private void broadcastFlag(UUID violatorUuid, String violatorName, Component message) {
-        if (StaffIsolationPolicy.suppressed(violatorUuid)) return;
         deliverToBroadcastViewers(violatorUuid, message, false);
 
         if (!platform.getRedisRepository().shouldSend(MessagingTopic.ALERTS)) {

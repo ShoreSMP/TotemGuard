@@ -166,9 +166,6 @@ public abstract class TGPlatform {
     public abstract Scheduler getScheduler();
 
     public abstract void dispatchCommand(String command);
-    public void dispatchCommand(String command, java.util.function.BooleanSupplier allowed) {
-        if (allowed.getAsBoolean()) dispatchCommand(command);
-    }
 
     public abstract @Nullable Sender createSender(@NotNull UUID playerUuid);
 

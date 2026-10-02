@@ -170,20 +170,6 @@ public abstract class CheckImpl implements Check {
 
     public void clearViolations() {
         violations = 0;
-        automaticViolations = new com.deathmotion.totemguard.integration.AutomaticViolationCounter();
-    }
-
-    private volatile com.deathmotion.totemguard.integration.AutomaticViolationCounter automaticViolations =
-            new com.deathmotion.totemguard.integration.AutomaticViolationCounter();
-
-    public void recordAutomaticViolation(long revision) {
-        automaticViolations.record(com.deathmotion.totemguard.integration.StaffIsolationPolicy.revision(player.getUuid()),
-                com.deathmotion.totemguard.integration.StaffIsolationPolicy.suppressed(player.getUuid()), revision);
-    }
-
-    public int automaticViolations(long revision) {
-        return com.deathmotion.totemguard.integration.StaffIsolationPolicy.installed()
-                ? automaticViolations.count(revision) : violations;
     }
 
     @Override

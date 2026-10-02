@@ -126,13 +126,6 @@ public class TGPaperPlatform extends TGPlatform {
     }
 
     @Override
-    public void dispatchCommand(String command, java.util.function.BooleanSupplier allowed) {
-        scheduler.runMainThreadTask(() -> {
-            if (allowed.getAsBoolean()) Bukkit.dispatchCommand(Bukkit.getConsoleSender(), command);
-        });
-    }
-
-    @Override
     public @Nullable Sender createSender(@NotNull UUID playerUuid) {
         Player player = Bukkit.getPlayer(playerUuid);
         if (player == null) return null;

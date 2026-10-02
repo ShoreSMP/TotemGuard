@@ -41,20 +41,16 @@ final class PlayerChatBuffer {
         this.bufferWindowSeconds = bufferWindowSeconds;
     }
 
-    void buffer(CheckImpl check, int violations, @Nullable String debug, @NotNull Map<String, Object> extras, long revision) {
+    void buffer(CheckImpl check, int violations, @Nullable String debug, @NotNull Map<String, Object> extras) {
         String checkName = check.getName();
 
         ChatBuffer existing = checkBuffers.get(checkName);
-        if (existing != null && !existing.allowsPublication()) {
-            checkBuffers.remove(checkName, existing);
-            existing = null;
-        }
         if (existing != null) {
             existing.update(violations, debug, extras);
             return;
         }
 
-        ChatBuffer fresh = new ChatBuffer(check, revision);
+        ChatBuffer fresh = new ChatBuffer(check);
         fresh.update(violations, debug, extras);
 
         ChatBuffer prior = checkBuffers.putIfAbsent(checkName, fresh);
@@ -73,7 +69,6 @@ final class PlayerChatBuffer {
 
     private void flush(String checkName, ChatBuffer chatBuffer) {
         if (!checkBuffers.remove(checkName, chatBuffer)) return;
-        if (!chatBuffer.allowsPublication()) return;
 
         CheckImpl check = chatBuffer.getCheck();
         Component alertMessage = AlertBuilder.build(
